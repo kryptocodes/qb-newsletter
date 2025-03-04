@@ -43,6 +43,17 @@ interface DomainStats {
   paidAmount: number;
 }
 
+// Add new interface for GrantApplication
+interface GrantApplication {
+  _id: string;
+  grant: {
+    _id: string;
+  };
+  milestones: {
+    amount: number;
+  }[];
+}
+
 function App() {
   const [sections, setSections] = useState<Section[]>([])
   const [selectedGrants] = useState<Set<string>>(new Set())
@@ -50,36 +61,48 @@ function App() {
   const [timeFilter, setTimeFilter] = useState<'weekly' | 'monthly' | 'overall'>('weekly')
   const [viewMode, setViewMode] = useState<'cards' | 'newsletter'>('cards')
   const [showOnlyAccepting, setShowOnlyAccepting] = useState(false)
+  const [grantApplications, setGrantApplications] = useState<GrantApplication[]>([])
+  const [isLoadingSections, setIsLoadingSections] = useState(false)
+  const [isLoadingTransfers, setIsLoadingTransfers] = useState(false)
+  const [isLoadingApplications, setIsLoadingApplications] = useState(false)
 
   // Fetch sections data
   useEffect(() => {
     const fetchSections = async () => {
-      const response = await fetch('https://api-grants.questbook.app/graphql', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          query: `
-            query Sections {
-              sections(filter: { _operators: { _id: { in: ["Axelar", "Alchemix", "Arbitrum", "TON Foundation", "Compound", "ENS", "Shido"] } } }) {
-                _id
-                sectionName
-                sectionLogoIpfsHash
-                grants {
+      setIsLoadingSections(true)
+      try {
+        const response = await fetch('https://api-grants.questbook.app/graphql', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            query: `
+              query Sections {
+                sections(filter: { _operators: { _id: { in: ["Axelar", "Alchemix", "Arbitrum", "TON Foundation", "Compound", "ENS", "Okto"] } } }) {
                   _id
-                  title
-                  numberOfApplications
-                  acceptingApplications
-                  numberOfApplicationsSelected
+                  sectionName
+                  sectionLogoIpfsHash
+                  grants {
+                    _id
+                    title
+                    numberOfApplications
+                    acceptingApplications
+                    numberOfApplicationsSelected
+                  }
                 }
               }
-            }
-          `
+            `
+          })
         })
-      })
-      const data = await response.json()
-      setSections(data.data.sections)
+        const data = await response.json()
+        setSections(data.data.sections)
+      } catch (error) {
+        console.error('Error fetching sections:', error)
+        toast.error('Failed to load sections')
+      } finally {
+        setIsLoadingSections(false)
+      }
     }
     fetchSections()
   }, [])
@@ -89,128 +112,147 @@ function App() {
     if (selectedGrants.size === 0) return;
 
     const fetchFundTransfers = async () => {
-      const grantIds = Array.from(selectedGrants).map(id => `"${id}"`).join(',');
-      const now = Math.floor(Date.now() / 1000);
-      const filterDate = new Date();
-      if (timeFilter === 'weekly') {
-        filterDate.setDate(filterDate.getDate() - 7);
-      } else if (timeFilter === 'monthly') {
-        filterDate.setMonth(filterDate.getMonth() - 1);
-      } else {
-        filterDate.setFullYear(filterDate.getFullYear() - 3);
-      }
-      const fromTimestamp = Math.floor(filterDate.getTime() / 1000);
+      setIsLoadingTransfers(true)
+      try {
+        const grantIds = Array.from(selectedGrants).map(id => `"${id}"`).join(',');
+        const now = Math.floor(Date.now() / 1000);
+        const filterDate = new Date();
+        if (timeFilter === 'weekly') {
+          filterDate.setDate(filterDate.getDate() - 7);
+        } else if (timeFilter === 'monthly') {
+          filterDate.setMonth(filterDate.getMonth() - 1);
+        } else {
+          filterDate.setFullYear(filterDate.getFullYear() - 3);
+        }
+        const fromTimestamp = Math.floor(filterDate.getTime() / 1000);
 
-      const response = await fetch('https://api-grants.questbook.app/graphql', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          query: `
-            query FundTransfers {
-              fundTransfers(
-                limit: 10000,
-                filter: {
-                  status: "executed",
-                 
-                  _operators: { 
-                    grant: { in: [${grantIds}] },
-                    createdAtS: { 
-                      gte: ${fromTimestamp},
-                      lte: ${now}
-                    } 
+        const response = await fetch('https://api-grants.questbook.app/graphql', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            query: `
+              query FundTransfers {
+                fundTransfers(
+                  limit: 10000,
+                  filter: {
+                    status: "executed",
+                   
+                    _operators: { 
+                      grant: { in: [${grantIds}] },
+                      createdAtS: { 
+                        gte: ${fromTimestamp},
+                        lte: ${now}
+                      } 
+                    }
+                  }
+                ) {
+                  _id
+                  amount
+                  sender
+                  to
+                  tokenName
+                  tokenUSDValue
+                  createdAt
+                  grant {
+                    _id
+                    title
                   }
                 }
-              ) {
-                _id
-                amount
-                sender
-                to
-                tokenName
-                tokenUSDValue
-                createdAt
-                grant {
-                  _id
-                  title
-                }
               }
-            }
-          `
-        })
-      });
-      const data = await response.json();
-      setFundTransfers(data.data.fundTransfers);
+            `
+          })
+        });
+        const data = await response.json();
+        setFundTransfers(data.data.fundTransfers);
+      } catch (error) {
+        console.error('Error fetching transfers:', error)
+        toast.error('Failed to load transfers')
+      } finally {
+        setIsLoadingTransfers(false)
+      }
     };
-    fetchFundTransfers();
-  }, [selectedGrants, timeFilter]);
+
+    if (sections.length > 0) {
+      fetchFundTransfers();
+    }
+  }, [sections, selectedGrants, timeFilter]);
 
   // Update the fetchFundTransfers function to handle empty grant selection
   useEffect(() => {
     const fetchFundTransfers = async () => {
-      const now = Math.floor(Date.now() / 1000);
-      const filterDate = new Date();
-      if (timeFilter === 'weekly') {
-        filterDate.setDate(filterDate.getDate() - 7);
-      } else if (timeFilter === 'monthly') {
-        filterDate.setMonth(filterDate.getMonth() - 1);
-      } else {
-        filterDate.setFullYear(filterDate.getFullYear() - 3);
-      }
-      const fromTimestamp = Math.floor(filterDate.getTime() / 1000);
+      setIsLoadingTransfers(true)
+      try {
+        const now = Math.floor(Date.now() / 1000);
+        const filterDate = new Date();
+        if (timeFilter === 'weekly') {
+          filterDate.setDate(filterDate.getDate() - 7);
+        } else if (timeFilter === 'monthly') {
+          filterDate.setMonth(filterDate.getMonth() - 1);
+        } else {
+          filterDate.setFullYear(filterDate.getFullYear() - 3);
+        }
+        const fromTimestamp = Math.floor(filterDate.getTime() / 1000);
 
-      // Get all grant IDs from all sections if no specific grants are selected
-      const grantIds = selectedGrants.size > 0
-        ? Array.from(selectedGrants)
-        : sections.flatMap(section => section.grants.map(grant => grant._id));
+        // Get all grant IDs from all sections if no specific grants are selected
+        const grantIds = selectedGrants.size > 0
+          ? Array.from(selectedGrants)
+          : sections.flatMap(section => section.grants.map(grant => grant._id));
 
-      if (grantIds.length === 0) return;
+        if (grantIds.length === 0) return;
 
-      const grantIdsString = grantIds.map(id => `"${id}"`).join(',');
+        const grantIdsString = grantIds.map(id => `"${id}"`).join(',');
 
-      const response = await fetch('https://api-grants.questbook.app/graphql', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          query: `
-            query FundTransfers {
-              fundTransfers(
-                limit: 10000,
-                filter: {
-                  _operators: { 
-                    grant: { in: [${grantIdsString}] },
-                    createdAtS: { 
-                      gte: ${fromTimestamp},
-                      lte: ${now}
-                    } 
+        const response = await fetch('https://api-grants.questbook.app/graphql', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            query: `
+              query FundTransfers {
+                fundTransfers(
+                  limit: 10000,
+                  filter: {
+                    _operators: { 
+                      grant: { in: [${grantIdsString}] },
+                      createdAtS: { 
+                        gte: ${fromTimestamp},
+                        lte: ${now}
+                      } 
+                    }
+                  }
+                ) {
+                  _id
+                  amount
+                  sender
+                  to
+                  tokenName
+                  tokenUSDValue
+                  createdAt
+                  grant {
+                    _id
+                    title
+                      reward {
+                         token {
+                           label
+                      }
+                  }
                   }
                 }
-              ) {
-                _id
-                amount
-                sender
-                to
-                tokenName
-                tokenUSDValue
-                createdAt
-                grant {
-                  _id
-                  title
-                    reward {
-                       token {
-                         label
-                    }
-                }
-                }
               }
-            }
-          `
-        })
-      });
-      const data = await response.json();
-      setFundTransfers(data.data.fundTransfers);
+            `
+          })
+        });
+        const data = await response.json();
+        setFundTransfers(data.data.fundTransfers);
+      } catch (error) {
+        console.error('Error fetching transfers:', error)
+        toast.error('Failed to load transfers')
+      } finally {
+        setIsLoadingTransfers(false)
+      }
     };
 
     // Only fetch if we have sections loaded
@@ -218,7 +260,80 @@ function App() {
       fetchFundTransfers();
     }
   }, [sections, selectedGrants, timeFilter]);
+  // Update the fetchFundTransfers function to also fetch grant applications
+  useEffect(() => {
+    const fetchData = async () => {
+      setIsLoadingApplications(true)
+      try {
+        const now = Math.floor(Date.now() / 1000);
+        const filterDate = new Date();
+        if (timeFilter === 'weekly') {
+          filterDate.setDate(filterDate.getDate() - 7);
+        } else if (timeFilter === 'monthly') {
+          filterDate.setMonth(filterDate.getMonth() - 1);
+        } else {
+          filterDate.setFullYear(filterDate.getFullYear() - 3);
+        }
+        const fromTimestamp = Math.floor(filterDate.getTime() / 1000);
+        // Get all grant IDs from all sections if no specific grants are selected
+        const grantIds = selectedGrants.size > 0
+          ? Array.from(selectedGrants)
+          : sections.flatMap(section => section.grants.map(grant => grant._id));
 
+        if (grantIds.length === 0) return;
+
+        const grantIdsString = grantIds.map(id => `"${id}"`).join(',');
+
+        
+        
+        const applicationsResponse = await fetch('https://api-grants.questbook.app/graphql', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            query: `
+              query GrantApplications {
+                grantApplications(
+                  limit: 10000,
+                  filter: { 
+                    state: "approved", 
+                    _operators: { 
+                      grant: { in: [${grantIdsString}] },
+                      updatedAtS: { 
+                        gte: ${fromTimestamp},
+                        lte: ${now}
+                      }
+                    } 
+                  }
+                ) {
+                  _id
+                  grant {
+                    _id
+                  }
+                  milestones {
+                    amount
+                  }
+                }
+              }
+            `
+          })
+        });
+        const applicationsData = await applicationsResponse.json();
+        console.log(applicationsData);
+        setGrantApplications(applicationsData.data.grantApplications);
+      } catch (error) {
+        console.error('Error fetching applications:', error)
+        toast.error('Failed to load applications')
+      } finally {
+        setIsLoadingApplications(false)
+      }
+    };
+    // Only fetch if we have sections loaded and grants selected
+    if (sections.length > 0) {
+      fetchData();
+    }
+  }, [sections, selectedGrants, timeFilter]); // Removed grantApplications and fundTransfers from dependencies
 
   const getFilteredTransfers = () => {
     const now = new Date();
@@ -241,6 +356,7 @@ function App() {
           totalProposals: 0,
           approvedProposals: 0,
           paidAmount: 0,
+          allocatedAmount: 0,
           tokenLabel: ''
         };
       }
@@ -256,14 +372,25 @@ function App() {
         acc[domain].tokenLabel = grantTransfers[0].grant.reward.token.label;
       }
 
+      // Calculate allocated amount from approved applications
+      const grantAllocations = grantApplications
+        .filter(app => app.grant._id === grant._id)
+        .reduce((sum, app) => {
+          const milestonesSum = app.milestones.reduce((total, milestone) => total + (Number(milestone.amount) || 0), 0);
+          return sum + milestonesSum;
+        }, 0);
+      
+      acc[domain].allocatedAmount = grantAllocations;
+
       return acc;
-    }, {} as Record<string, DomainStats & { tokenLabel: string }>);
+    }, {} as Record<string, DomainStats & { tokenLabel: string; allocatedAmount: number }>);
 
     // Calculate section totals
     const totals = {
       totalProposals: section.grants.reduce((sum, grant) => sum + (grant.numberOfApplications || 0), 0),
       approvedProposals: section.grants.reduce((sum, grant) => sum + (grant.numberOfApplicationsSelected || 0), 0),
-      paidAmount: Object.values(domainGroups).reduce((sum, stats) => sum + stats.paidAmount, 0)
+      paidAmount: Object.values(domainGroups).reduce((sum, stats) => sum + stats.paidAmount, 0),
+      allocatedAmount: Object.values(domainGroups).reduce((sum, stats) => sum + stats.allocatedAmount, 0)
     };
 
     return { totals, domainGroups };
@@ -361,7 +488,7 @@ https://questbook.app
       <Toaster position="top-right" />
       
       {/* Header */}
-      <header className="bg-white border-b border-gray-200">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center">
@@ -425,7 +552,11 @@ https://questbook.app
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {viewMode === 'newsletter' ? (
+        {isLoadingSections ? (
+          <div className="flex justify-center items-center h-64">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+          </div>
+        ) : viewMode === 'newsletter' ? (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-semibold text-gray-900">Newsletter Format</h2>
@@ -457,11 +588,17 @@ ${Object.entries(sectionStats.domainGroups)
           .map(([domain, stats]) =>
             `${domain}:
   - Proposals: ${stats.totalProposals} (${stats.approvedProposals} approved)
+  - Allocated: ${formatCurrency(stats.allocatedAmount)} ${stats.tokenLabel}
   - Paid: ${formatCurrency(stats.paidAmount)} ${stats.tokenLabel}`
           ).join('\n')}`;
 
               return (
                 <div key={section._id} className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+                  {(isLoadingTransfers || isLoadingApplications) && (
+                    <div className="absolute inset-0 bg-white/50 flex items-center justify-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                    </div>
+                  )}
                   <div className="p-6">
                     <div className="flex items-center justify-between mb-6">
                       <div className="flex items-center space-x-4">
@@ -530,6 +667,12 @@ ${Object.entries(sectionStats.domainGroups)
                                 <span className="text-gray-500">
                                   ({stats.approvedProposals.toLocaleString()} approved)
                                 </span>
+                              </p>
+                              <p className="text-sm text-gray-500">
+                                Allocated: <span className="text-gray-900 font-medium">
+                                  {formatCurrency(stats.allocatedAmount)}
+                                </span>
+                                <span className="text-indigo-600 ml-1">{stats.tokenLabel}</span>
                               </p>
                               <p className="text-sm text-gray-500">
                                 Paid: <span className="text-gray-900 font-medium">
